@@ -1,0 +1,431 @@
+---
+title: "588_project"
+output: html_document
+---
+
+## Data Processing
+First processing data, figure out variable and data type.
+
+```{r}
+loan <- read.csv("loan_data.csv", head = T, stringsAsFactors=FALSE)
+summary(loan)
+```
+
+```{r}
+length(unique(loan$Gender))
+unique(loan$Gender)  # missing value exists
+loan$Gender[loan$Gender==''] <- NA
+loan$Gender[loan$Gender=='Male'] <- 1
+loan$Gender[loan$Gender=='Female'] <- 0
+sum(is.na(loan$Gender))
+loan$Gender <- as.numeric(loan$Gender)
+```
+```{r}
+length(unique(loan$Married))
+unique(loan$Married)  # missing value exists
+loan$Married[loan$Married==''] <- NA
+loan$Married[loan$Married=='Yes'] <- 1
+loan$Married[loan$Married=='No'] <- 0
+sum(is.na(loan$Married))
+loan$Married <- as.numeric(loan$Married)
+```
+
+```{r}
+length(unique(loan$Dependents))
+unique(loan$Dependents)  # missing value exists
+loan$Dependents[loan$Dependents==''] <- NA
+loan$Dependents[loan$Dependents=='3+'] <- 3
+sum(is.na(loan$Dependents))
+loan$Dependents <- as.numeric(loan$Dependents)
+```
+
+```{r}
+length(unique(loan$Education))
+unique(loan$Education)  # no missing value
+loan$Education[loan$Education=='Graduate'] <- 1
+loan$Education[loan$Education=='Not Graduate'] <- 0
+loan$Education <- as.numeric(loan$Education)
+```
+
+```{r}
+length(unique(loan$Self_Employed))
+unique(loan$Self_Employed)  # missing value exists
+loan$Self_Employed[loan$Self_Employed==''] <- NA
+loan$Self_Employed[loan$Self_Employed=='No'] <- 0
+loan$Self_Employed[loan$Self_Employed=='Yes'] <- 1
+sum(is.na(loan$Self_Employed))
+loan$Self_Employed <- as.numeric(loan$Self_Employed)
+```
+
+```{r}
+length(unique(loan$Property_Area))
+unique(loan$Property_Area)  # no missing value
+loan$Property_Area[loan$Property_Area=='Rural'] <- 1
+loan$Property_Area[loan$Property_Area=='Semiurban'] <- 2
+loan$Property_Area[loan$Property_Area=='Urban'] <- 3
+loan$Property_Area <- as.numeric(loan$Property_Area)
+```
+
+Dealing with missing data (numeric/binary/factor variables) separately
+
+```{r}
+# Removing data
+loan_noca <- subset(loan, select = -c(Loan_ID, Loan_Status))
+summary(loan_noca)
+```
+
+```{r}
+library(mice)
+# impute the missing values
+imputed_noca <- mice(loan_noca, m=5, maxit=50, method = 'cart', seed = 666)
+
+```
+
+```{r}
+summary(imputed_noca)
+
+```
+
+You can also embed plots, for example:
+
+```{r}
+library(VIM)
+mice_plot <- aggr(loan_noca, col=c('navyblue','yellow'),
+numbers=TRUE, sortVars=TRUE,
+labels=names(loan_noca), cex.axis=.7,
+gap=3, ylab=c("Missing data","Pattern"))
+
+```
+Histogram clearly depicts the influence of missing values in the variables.
+Right-hand-side plot gives the frequencies for different combination of variables missing.
+There are 78% values in the data set with no missing value. There are 8% missing values in credit history, 5% missing values in self employed and so on. 
+
+```{r}
+# Check imputed values for both quantitative and qualitative data
+imputed_noca$imp$Loan_Amount_Term
+imputed_noca$imp$Gender
+imputed_noca$imp$LoanAmount
+
+# Get complete data ( 3rd out of 5)
+completeData <- complete(imputed_noca, 3)
+sum(is.na(completeData))
+head(completeData)
+
+```
+```{r}
+#check linearity
+corr <- cor(completeData)
+corr  ## only LoanAmount and ApplicantIncome have strong correlation
+
+```
+
+```{r}
+## Factor Analysis for a mix of continuous and categorical data
+library(FactoMineR)
+library(factoextra)
+## change data type in order to identify continuous and categorical data type
+c = completeData
+c$Gender[c$Gender=='1'] <- 'Male'
+c$Gender[c$Gender=='0'] <- 'Female'
+c$Married[c$Married=='1'] <- 'Yes'
+c$Married[c$Married=='0'] <- 'No'
+c$Dependents[c$Dependents=='3'] <- 'three+'
+c$Dependents[c$Dependents=='2'] <- 'two'
+c$Dependents[c$Dependents=='1'] <- 'one'
+c$Dependents[c$Dependents=='0'] <- 'none'
+c$Education[c$Education=='1'] <- 'Graduate'
+c$Education[c$Education=='0'] <- 'Not Graduate'
+c$Self_Employed[c$Self_Employed=='0'] <- 'No'
+c$Self_Employed[c$Self_Employed=='1'] <- 'Yes'
+c$Property_Area[c$Property_Area=='1'] <- 'Rural'
+c$Property_Area[c$Property_Area=='2'] <- 'Semiurban'
+c$Property_Area[c$Property_Area=='3'] <- 'Urban'
+c$Credit_History[c$Credit_History=='1'] <- 'Yes'
+c$Credit_History[c$Credit_History=='0'] <- 'No'
+
+```
+
+```{r}
+# Check Categorical Variables
+newdata = c
+newdata$Loan_Status = loan$Loan_Status
+
+par(mfrow = c(2,3))
+categ = c(1,2,3,4,5,10,11,12)
+for (i in 1:8){
+  counts = table(newdata$Loan_Status, newdata[, categ[i]])
+  barplot(counts, main=paste("Loan Status by", colnames(newdata[categ[i]])),
+  xlab = colnames(newdata[categ[i]]), col = c("darkblue","red"),
+  legend = rownames(counts), args.legend = list(x = "topright"))}  ## seems resonable
+
+```
+
+```{r}
+#proportion of "Y" status
+sum(loan$Loan_Status=="Y")/dim(loan)[1] ## Standard for checking data (0.6872964) 
+
+```
+
+```{r}
+Loan_Status = loan$Loan_Status
+newdata = data.frame(completeData, Loan_Status)
+
+# ROC
+library(ROCR)
+library(pROC)
+rocplot = function(pred, truth){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf)
+}
+
+# train&test
+set.seed(666)
+n_train = sample.int(n = nrow(newdata), size = floor(.70*nrow(newdata)), replace = F)
+n_test = -n_train
+train = newdata[n_train,]
+test = newdata[n_test,]
+n = dim(test)[1]
+```
+
+```{r}
+# logistic regression
+m_lr1 = glm(Loan_Status~., data = train, family = binomial)
+summary(m_lr1)
+prob_lr1 <- predict(m_lr1, test, type = "response")
+prob_lr2 <- predict(m_lr1, train, type = "response")
+pre_lr1 <- rep(0,n)
+pre_lr1[prob_lr1>0.75] = "Y"
+pre_lr1[prob_lr1<0.75] = "N"
+mean(pre_lr1 == test[,"Loan_Status"])           ## 0.6918919
+
+rocplot(prob_lr1, loan[n_test,"Loan_Status"])
+title(main = "ROC of Logistic regression")
+
+# AUC for test set (used in classification analysis in order to determine which of the used models predicts the classes best.)
+auc(roc(loan[n_test,"Loan_Status"], prob_lr1))  ## 0.7277
+
+#AUC for train set
+auc(roc(loan[n_train,"Loan_Status"], prob_lr2)) ## 0.78
+
+```
+```{r}
+hist(newdata$LoanAmount)
+hist(newdata$ApplicantIncome)
+hist(newdata$CoapplicantIncome)
+
+```
+
+```{r}
+# Adjust extreme value
+# Loan Amount
+newdata$LoanAmount <- log(newdata$LoanAmount)
+newdata$TotalIncome <- log(newdata$ApplicantIncome + newdata$CoapplicantIncome)
+newdata <- subset(newdata, select = -c(ApplicantIncome, CoapplicantIncome))
+
+# train&test
+set.seed(666)
+n_train = sample.int(n = nrow(newdata), size = floor(.70*nrow(newdata)), replace = F)
+n_test = -n_train
+train = newdata[n_train,]
+test = newdata[n_test,]
+n = dim(test)[1]
+
+```
+
+```{r}
+#LDA
+library(MASS)
+m_lda <- lda(Loan_Status~., train)
+pre_lda <- predict(m_lda, test)
+pre_lda1 <- predict(m_lda, train)
+mean(pre_lda$class == test[,"Loan_Status"])  ## 0.7783784
+
+# plot ROC
+rocplot(pre_lda$posterior[,2], loan[n_test,"Loan_Status"])
+title(main = "ROC of LDA")
+
+# AUC for test
+auc(roc(loan[n_test,"Loan_Status"], pre_lda$posterior[,2]))  ## 0.7227
+
+#AUC for train
+auc(roc(loan[n_train,"Loan_Status"], pre_lda1$posterior[,2])) #0.7758
+```
+
+```{r}
+# QDA
+m_qda1 <- qda(Loan_Status~., train)
+pre_qda1 <- predict(m_qda1, test)
+pre_qda2 <- predict(m_qda1, train)
+mean(pre_qda1$class == test[,"Loan_Status"]) ## 0.7675676
+
+# ROC
+rocplot(pre_qda1$posterior[,2], loan[n_test,"Loan_Status"])
+title(main = "ROC of QDA")
+
+# AUC for test
+auc(roc(loan[n_test,"Loan_Status"], pre_qda1$posterior[,2])) ## 0.6983
+# AUC for train
+auc(roc(loan[n_train,"Loan_Status"], pre_qda2$posterior[,2])) ## 0.8045
+
+```
+
+```{r}
+# KNN
+library(class)
+LoanStatus_train <- newdata$Loan_Status[n_train]
+LoanStatus_test <- newdata$Loan_Status[n_test]
+training1 <- newdata[n_train, -which(names(newdata) == "Loan_Status")]
+testing1 <- newdata[n_test, -which(names(newdata) == "Loan_Status")]
+set.seed(666)
+num <- 0
+a_value <- 0.5
+#A
+for (i in seq(1:100)) {
+  pre_knn <- knn(training1, testing1, LoanStatus_train, k = i, prob=TRUE)
+  auc_value <- auc(roc(loan[n_test,"Loan_Status"], attributes(pre_knn)$prob))
+  if (auc_value > a_value){
+    a_value = auc_value
+    num = i
+  }
+}
+num ## 17
+a_value ## AUC 0.7542
+
+# AUC for train
+pre_knn1 <- knn(training1, training1, LoanStatus_train, k = 17, prob=TRUE)
+auc(roc(loan[n_train,"Loan_Status"], attributes(pre_knn1)$prob))  #0.8162
+
+
+```
+
+```{r}
+# Support Vector Machine
+library(e1071)
+tune.out <- tune(svm, Loan_Status~., data=train, kernel="radial", ranges=list(cost=c(0.1,1,10,100,1000),  gamma=c(0.5,1,2,3,4)))
+tune.out$best.model
+
+## Train data
+pred <- predict(tune.out$best.model, train, decision.values=T)
+fitted <- attr(pred, "decision.values")
+fitted <- as.numeric(fitted)
+rocplot(fitted, loan[n_train,"Loan_Status"])
+title(main = "ROC of SVM train data, cost=1, gamma=0.5")
+auc(roc(loan[n_train,"Loan_Status"], fitted))  ## AUC 0.9454
+
+## Test data
+pred <- predict(tune.out$best.model, test, decision.values=T)
+fitted <- attr(pred, "decision.values")
+fitted <- as.numeric(fitted)
+rocplot(fitted, loan[n_test,"Loan_Status"])
+title(main = "ROC of SVM test data, cost=1, gamma=0.5")
+auc(roc(loan[n_test,"Loan_Status"], fitted))  ## AUC 0.7575
+
+
+```
+
+
+
+```{r}
+# Support Vector Machine
+library(e1071)
+tune.out2 <- tune(svm, Loan_Status~., data=train, kernel="polynomial", ranges=list(cost=c(0.1,1,10,100,1000),  degree=c(1,2,3,4)))
+tune.out2$best.model
+
+## Train data
+pred2 <- predict(tune.out2$best.model, train, decision.values=T)
+fitted2 <- attr(pred2, "decision.values")
+fitted2 <- as.numeric(fitted2)
+rocplot(fitted2, loan[n_train,"Loan_Status"])
+title(main = "ROC of SVM train data, cost=1, degree=1")
+auc(roc(loan[n_train,"Loan_Status"], fitted2))  ## AUC 0.7368
+
+## Test data
+pred2 <- predict(tune.out2$best.model, test, decision.values=T)
+fitted2 <- attr(pred2, "decision.values")
+fitted2 <- as.numeric(fitted2)
+rocplot(fitted2, loan[n_test,"Loan_Status"])
+title(main = "ROC of SVM test data, cost=0.1, degree=1")
+auc(roc(loan[n_test,"Loan_Status"], fitted2))  ## AUC 0.7
+
+
+```
+
+
+```{r}
+## Ramdom Forest
+library(randomForest)
+m_rf1 <- randomForest(Loan_Status~., train, ntree = 500, mtry = 3, importance = TRUE)
+pre_rf1 <- predict(m_rf1, test, type="prob")
+importance(m_rf1)                                 ## Credit_History
+
+## Train data
+rocplot(m_rf1$votes[,2], loan[n_train,"Loan_Status"])
+title(main = "ROC of random forest train dataset")
+auc(roc(loan[n_train,"Loan_Status"], m_rf1$votes[,2])) ## 0.7344
+
+## Test data
+rocplot(pre_rf1[,2], loan[n_test,"Loan_Status"])
+title(main = "ROC of random forest test dataset")
+auc(roc(loan[n_test,"Loan_Status"], pre_rf1[,2]))  ## 0.7651
+
+```
+```{r}
+## Boosting
+train_new = train
+test_new = test
+train_new$Loan_Status = as.character(train_new$Loan_Status)
+test_new$Loan_Status = as.character(test_new$Loan_Status)
+train_new$Loan_Status[train_new$Loan_Status== "Y"] <- 1
+train_new$Loan_Status[train_new$Loan_Status== "N"] <- 0
+test_new$Loan_Status[test_new$Loan_Status== "Y"] <- 1
+test_new$Loan_Status[test_new$Loan_Status== "N"] <- 0
+train_new$Loan_Status = as.numeric(train_new$Loan_Status)
+test_new$Loan_Status = as.numeric(test_new$Loan_Status)
+```
+
+```{r}
+## Boosting
+library(gbm)
+#boosting on train with 1000 trees
+set.seed(1)
+power = seq(-10, -0.2, by = 0.1)
+lambda = 10^power
+l_lambda = length(lambda)
+train_error = rep(0, l_lambda)
+test_error = rep(0, l_lambda)
+for (i in 1:l_lambda){
+  m_boost = gbm(Loan_Status~., data = train_new, distribution = "bernoulli",n.trees = 1000, shrinkage = lambda[i], interaction.depth=4)
+  pre_train = predict(m_boost, train_new, n.trees = 1000)
+  pre_test = predict(m_boost, test_new, n.trees = 1000)
+  train_error[i] = mean((train_new$Loan_Status-pre_train)^2)
+  test_error[i] = mean((test_new$Loan_Status-pre_test)^2)
+}
+#plot with different shrinkage values vs test MSE
+plot(lambda, test_error, type = "b", xlab = "Shrinkage", ylab = "Test MSE")
+min(test_error)
+lambda[which.min(test_error)]
+
+#best model
+m_best = gbm(Loan_Status~., data = train_new, distribution = "bernoulli", n.trees = 1000, shrinkage = lambda[which.min(test_error)])
+summary(m_best) #relative influence
+
+best_test = predict(m_best, test_new, n.trees = 1000, type = "response")
+best_test
+rocplot(m_rf1$votes[,2], loan[n_train,"Loan_Status"])
+title(main = "ROC of random forest train dataset")
+auc(roc(loan[n_train,"Loan_Status"], m_rf1$votes[,2])) ## 0.7344
+
+
+
+```
+
+```{r}
+## Boosting
+installed.packages("adabag")
+library(adabag)
+#boosting on train with 1000 trees
+boost = boosting.cv(Loan_Status, train_new, v = 10, boos = TRUE, mfinal = 100)
+pre_boost = 
+
+```
